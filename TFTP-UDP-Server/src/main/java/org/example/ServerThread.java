@@ -9,9 +9,11 @@ import java.net.InetAddress;
 import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
 import java.util.Random;
+import java.util.logging.Logger;
 
 
 public class ServerThread extends Thread{
+    private static final Logger LOGGER = Logger.getLogger(MyClass.class.getName());
     private volatile boolean running = true;
     private int blockNumber = 0;
     private final static int MAX_PACKET = 516;
@@ -20,7 +22,7 @@ public class ServerThread extends Thread{
 
     private final byte[] errorData = createErrorData();
     DatagramSocket socket;
-    private InetAddress destAddress; private int destTID;
+    private InetAddress destAddress; private int destTID; private int localPort;
 
     private DatagramPacket initPacket;
     public ServerThread (DatagramPacket packet) throws SocketException{
@@ -28,7 +30,7 @@ public class ServerThread extends Thread{
 
         socket = new DatagramSocket(rand.nextInt(10000) + 1000);
         int localPort = socket.getLocalPort();
-        socket.setSoTimeout(10000);
+        socket.setSoTimeout(1000);
 
         this.initPacket = packet;
         destAddress = initPacket.getAddress();
@@ -79,25 +81,31 @@ public class ServerThread extends Thread{
         }
     }
 
-    public DatagramPacket processRRQ(DatagramPacket p){
+    public void processRRQ(DatagramPacket p){
         String filename = extractFilename(p);
         if (checkFileInFolder(filename)){
             File toRead = new File("Files",filename);
+            //Checks File Directory
             try (BufferedInputStream bis = new BufferedInputStream(new FileInputStream(toRead))) {
-
-                socket.setSoTimeout(10000); // Set a timeout of 10 seconds to wait for an ACK
+                //Timeout set to 10 seconds as standard timeout range not known
+                socket.setSoTimeout(10000);
 
                 byte[] readBuffer = new byte[MAX_DATA_LENGTH];
                 byte[] sendBuffer = new byte[MAX_PACKET];
                 int bytesRead;
-                int blockNumber = 1;
+                blockNumber = 1;
 
+
+                /** BufferedInputStream.read(buffer) returns number of bytes read into the buffer,
+                 * or -1 if there is no more data.*/
                 while ((bytesRead = bis.read(readBuffer)) != -1) {
                     sendBuffer[0] = 0;
                     sendBuffer[1] = 3; // Opcode for DATA is 0x0003
                     sendBuffer[2] = (byte) (blockNumber >> 8);
                     sendBuffer[3] = (byte) (blockNumber & 0xFF);
 
+                    //Copies contents <= bytes of read buffer into offset(4) of sendBuffer
+                    //bytesRead??
                     System.arraycopy(readBuffer, 0, sendBuffer, 4, bytesRead);
 
                     DatagramPacket sendPacket = new DatagramPacket(sendBuffer, bytesRead + 4, destAddress, destTID);
@@ -116,6 +124,9 @@ public class ServerThread extends Thread{
                             if (ackBuffer[1] == 4 && // Opcode for ACK is 0x0004
                                     ackBuffer[2] == sendBuffer[2] && ackBuffer[3] == sendBuffer[3]) {
                                 ackReceived = true; // Correct ACK received
+                            }
+                            else{
+                                sendErrAwaitClose();
                             }
                         } catch (SocketException e) {
                             System.out.println("Timeout, resending data block " + blockNumber);
@@ -163,6 +174,9 @@ public class ServerThread extends Thread{
 
                 // Send ACK
                 byte[] ackData = {0, 4, (byte) (blockNumber >> 8), (byte) (blockNumber & 0xFF)};
+                for (byte b : ackData) {
+                    System.out.print("ACK: "+String.format("%8s", Integer.toBinaryString(b & 0xFF)).replace(' ', '0') + " ");
+                }
                 DatagramPacket ackPacket = new DatagramPacket(ackData, ackData.length, destAddress, destTID);
                 socket.send(ackPacket);
 
@@ -176,22 +190,7 @@ public class ServerThread extends Thread{
         }
     }
 
-    public DatagramPacket processERROR(DatagramPacket p){
 
-    }
-
-
-    public void writeTofile(byte[] name, byte[] data){
-
-    }
-
-    public byte[] readFromFile(String filename){
-        return null;
-    }
-
-    public boolean checkFileAvailable(String string){
-
-    }
 
     private String extractFilename(DatagramPacket p){
         byte[] data = p.getData();
@@ -228,13 +227,6 @@ public class ServerThread extends Thread{
         }
     }
 
-    private boolean recieveData(){
-
-    }
-
-    private boolean sendData(){
-
-    }
 
     public static boolean checkFileInFolder(String fileName) {
         // Define the directory path for the "Files" folder
@@ -259,6 +251,25 @@ public class ServerThread extends Thread{
             return false;
         }
     }
+    public void makeFiles(){
+        File directory = new File("Files","file.txt");
+        if (!directory.exists()) {
+            directory.mkdirs();
+        }
+    }
+
+
+    //Test Methods
+    public int getTID(){
+        return localPort;
+    }
+    public DatagramPacket getInitPacket(){
+        return initPacket;
+    }
+    public DatagramSocket getSocket(){
+        return socket;
+    }
+
 }
 
 
