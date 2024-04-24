@@ -1,9 +1,6 @@
 package org.example;
 
-import java.io.DataInput;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
+import java.io.*;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -16,6 +13,8 @@ import java.util.Random;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ServerThreadTest {
+    private final static int MAX_PACKET = 516;
+    private final static int MAX_DATA_LENGTH = 512;
 
 
     @org.junit.jupiter.api.BeforeEach
@@ -68,74 +67,63 @@ class ServerThreadTest {
     }
 
     @org.junit.jupiter.api.Test
-    void testPacketReception() {
-        ServerThread thread = null;
-        DatagramSocket receivingSocket = null;
+    void testWRQACKReception() {
+        DatagramSocket clientSocket = null;
         try {
-            receivingSocket = new DatagramSocket(6969);
-        } catch (SocketException e) {
-            assertTrue(false, "Failed to create receiving socket");
-        }
+            int serverPort = 9999;
+            // Set up the client socket
+            clientSocket = new DatagramSocket(serverPort);
+            InetAddress serverAddress = InetAddress.getByName("127.0.0.1");
+            clientSocket.setSoTimeout(5000);
 
-        // Create WRQData
-        byte[] filename = "file.bin".getBytes(StandardCharsets.UTF_8);
-        byte[] octet = "octet".getBytes(StandardCharsets.UTF_8);
-        int length = 3 + filename.length + 1 + octet.length + 1;
-        byte[] WRQData = new byte[length];
-        int index = 0;
-        WRQData[index++] = 0;
-        WRQData[index++] = 2;
-        System.arraycopy(filename, 0, WRQData, index, filename.length);
-        index += filename.length;
-        WRQData[index++] = 0;
-        System.arraycopy(octet, 0, WRQData, index, octet.length);
-        index += octet.length;
-        WRQData[index] = 0;
+            // Prepare the WRQ packet
+            byte[] wrqData = createPacketData(2, "file.txt", "octet");
+            DatagramPacket wrqPacket = new DatagramPacket(wrqData, wrqData.length, serverAddress, 6969);
 
-        InetAddress address = null;
-        try {
-            address = InetAddress.getByName("127.0.0.1");
-        } catch (UnknownHostException e) {
-            assertTrue(false, "Failed to set InetAddress");
-        }
-        DatagramPacket WRQpacket = new DatagramPacket(WRQData, WRQData.length, address, 6969);
+            // Start the server thread
+            ServerThread serverThread = new ServerThread(wrqPacket);
+            serverThread.start();
 
-        // Start a new thread to simulate the sender socket
-        new Thread(() -> {
-            try (DatagramSocket sendingSocket = new DatagramSocket()) {
-                sendingSocket.send(WRQpacket);
-            } catch (Exception e) {
-                e.printStackTrace();
-                assertTrue(false, "Failed to send packet");
-            }
-        }).start();
+            // Receive ACK for WRQ
+            byte[] ackBuffer1 = new byte[4];
+            DatagramPacket ack1 = new DatagramPacket(ackBuffer1, ackBuffer1.length);
+            clientSocket.receive(ack1);
 
-        // Now wait and receive the packet
-        byte[] receivedData = new byte[4]; // Adjust the buffer size accordingly
-        DatagramPacket receivedACK = new DatagramPacket(receivedData, receivedData.length);
-        try {
-            receivingSocket.receive(receivedACK);
+            // Send first data packet DATA1
+            byte[] data1 = createDataPacket(1, true);
+            DatagramPacket data1Packet = new DatagramPacket(data1, data1.length, serverAddress, 6969);
+            clientSocket.send(data1Packet);
+
+            // Receive ACK for DATA1
+            byte[] ackBuffer2 = new byte[4];
+            DatagramPacket ack2 = new DatagramPacket(ackBuffer2, ackBuffer2.length);
+            clientSocket.receive(ack2);
+
+            // Send second data packet DATA_TERM (terminal data packet)
+            byte[] dataTerm = createDataPacket(2, false); // Smaller data size to signify end of data transfer
+            DatagramPacket dataTermPacket = new DatagramPacket(dataTerm, dataTerm.length, serverAddress, serverPort);
+            clientSocket.send(dataTermPacket);
+
+            // Receive ACK for DATA_TERM
+            byte[] ackBuffer3 = new byte[4];
+            DatagramPacket ack3 = new DatagramPacket(ackBuffer3, ackBuffer3.length);
+            clientSocket.receive(ack3);
+
+            System.out.println("Here");
+            // Print all ACKs as a series of 8-bit bytes
+            assertAll("CorrectACKs",
+                    () -> assertEquals("00000000 00000100 00000000 00000000",bytesToBinaryString(ackBuffer1)),
+                    () -> assertEquals("00000000 00000011 00000000 00000001",bytesToBinaryString(ackBuffer2)),
+                    () -> assertEquals("00000000 00000011 00000000 00000010",bytesToBinaryString(ackBuffer3))
+
+            );
         } catch (Exception e) {
             e.printStackTrace();
-            assertTrue(false, "Failed to receive packet");
+        } finally {
+            if (clientSocket != null && !clientSocket.isClosed()) {
+                clientSocket.close();
+            }
         }
-        // Verify the received packet
-        byte[] receivedWRQData = receivedACK.getData();
-        for (byte b : receivedWRQData) {
-            System.out.print(String.format("%8s", Integer.toBinaryString(b & 0xFF)).replace(' ', '0') + " ");
-        }
-        System.out.println();
-        assertAll("correctACK",
-                () -> assertEquals(receivedWRQData.length,4),
-                () -> assertEquals(0, receivedWRQData[0]),
-                () -> assertEquals(4, receivedWRQData[1]),
-                () -> assertEquals(0, receivedWRQData[2]),
-                () -> assertEquals(0, receivedWRQData[3])
-        );
-
-        // Clean up
-        receivingSocket.close();
-        thread = null;
     }
 
 
@@ -167,4 +155,41 @@ class ServerThreadTest {
 
     }
      */
+    public static String bytesToBinaryString(byte[] bytes) {
+        StringBuilder binary = new StringBuilder();
+        for (byte b : bytes) {
+            binary.append(String.format("%8s", Integer.toBinaryString(b & 0xFF)).replace(' ', '0')).append(" ");
+        }
+        return binary.toString().trim();
+    }
+
+    public static byte[] createPacketData(int opcode, String filename, String mode) {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        baos.write(0);
+        baos.write(opcode); // WRQ is 2
+        try {
+            baos.write(filename.getBytes(StandardCharsets.UTF_8));
+            baos.write(0);
+            baos.write(mode.getBytes(StandardCharsets.UTF_8));
+            baos.write(0);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return baos.toByteArray();
+    }
+
+    public static byte[] createDataPacket(int blockNumber, boolean fullSize) {
+        int size = fullSize ? MAX_PACKET : MAX_PACKET / 2;
+        byte[] data = new byte[size];
+        data[0] = 0;
+        data[1] = 3; // DATA opcode
+        data[2] = (byte) (blockNumber >> 8);
+        data[3] = (byte) (blockNumber & 0xFF);
+        for (int i = 4; i < size; i++) {
+            data[i] = (byte) (i % 2); // Filling with sample data
+        }
+        return data;
+    }
+
+
 }
