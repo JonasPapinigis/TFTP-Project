@@ -7,21 +7,23 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.Random;
+import java.util.Scanner;
 
-public class Server{
+public class Server extends Thread{
     private final static int MAX_LENGTH = 516;
     protected DatagramSocket socket = null;
     private boolean running = false;
     public Server() throws SocketException{
 
         socket = new DatagramSocket(69);
+        socket.setSoTimeout(5000);
 
     }
 
-    public void run(){
+    public void start(){
         byte[] buffer = new byte[MAX_LENGTH];
-        running = true;
-        while(running){
+        while(true){
+            System.out.println("...Listening");
             DatagramPacket pack = new DatagramPacket(buffer,MAX_LENGTH);
             try {
                 socket.receive(pack);
@@ -74,8 +76,6 @@ public class Server{
         int length = pack.getLength();
 
         if (data[0] != 0 || data[1] != 1 || data[1] != 2){
-            System.out.println("SERVER: Recieving packet from "+
-                    pack.getAddress()+ ", Port: "+ pack.getPort() +" not a WRQ or RRQ");
             return false;
         }
         int zeroBytes = 0;
@@ -93,6 +93,45 @@ public class Server{
     }
 
     public static void main(String[] args){
+        Scanner scanner = new Scanner(System.in);
+        System.out.println("------TFTP Protocol Server------");
+        System.out.println("This is a server client which can accept several Net IO operations over the TFTP protocol");
+        System.out.println("Files are stored in the Files folder in the working directory");
+        System.out.println("To access please use the TFTP Protocol Client to access information");
+        boolean validInput = false;
+        while(!validInput){
+            System.out.println("COMMANDS: -start\n          -exit\nInput:");
+            String argument = scanner.nextLine();
+            if (argument.equals("-exit")){
+                validInput = true;
+                break;
+            }
+            else if (argument.equals("-start")){
+                validInput = true;
+                try {
+                    Server server = new Server();
+                    server.start();
+                    boolean exited = false;
+                    while(!exited){
+                        System.out.println("Type -exit to shut down server");
+                        argument = scanner.nextLine();
+                        if (argument.equals("-exit")){
+                            exited=true;
+                            server.interrupt();
+                        }
+                    }
+                } catch (SocketException e) {
+                    System.out.println("SERVER ERROR: Socket Error, failed to start server");
+                    e.printStackTrace();
+                    continue;
+                }
+            }
+            else{
+                System.out.println("SERVER ERROR: Invalid arguement");
+            }
+        }
+
+
 
     }
 
