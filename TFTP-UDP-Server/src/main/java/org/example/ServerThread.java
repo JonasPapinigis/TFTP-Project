@@ -169,7 +169,6 @@ public class ServerThread extends Thread {
                 System.out.println("BlockNo: "+blockNumber);
                 byte[] dataBuffer = new byte[MAX_PACKET];
                 DatagramPacket receivePacket = new DatagramPacket(dataBuffer, dataBuffer.length);
-                System.out.println("Waiting to recieve packet");
                 socket.receive(receivePacket);
                 System.out.println("Recieved Packet");
                 int length = receivePacket.getLength();

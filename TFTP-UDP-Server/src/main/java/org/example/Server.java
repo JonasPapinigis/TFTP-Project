@@ -12,7 +12,6 @@ import java.util.Date;
 import java.util.Random;
 
 public class Server{
-    private static int TID;
     private final static int MAX_LENGTH = 516;
     protected DatagramSocket socket = null;
     public Server() throws SocketException{
@@ -90,7 +89,7 @@ public class Server{
     }
 
     public static void main(String[] args){
-        
+
     }
 
 }
