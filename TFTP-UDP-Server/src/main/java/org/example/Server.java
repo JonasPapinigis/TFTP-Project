@@ -3,10 +3,7 @@ package org.example;
 import org.w3c.dom.ranges.Range;
 
 import java.io.IOException;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.net.InetAddress;
-import java.net.SocketException;
+import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.Random;
@@ -14,6 +11,7 @@ import java.util.Random;
 public class Server{
     private final static int MAX_LENGTH = 516;
     protected DatagramSocket socket = null;
+    private boolean running = false;
     public Server() throws SocketException{
 
         socket = new DatagramSocket(69);
@@ -22,12 +20,16 @@ public class Server{
 
     public void run(){
         byte[] buffer = new byte[MAX_LENGTH];
-        while(true){
+        running = true;
+        while(running){
             DatagramPacket pack = new DatagramPacket(buffer,MAX_LENGTH);
             try {
                 socket.receive(pack);
-            } catch (IOException e) {
-                //FIX
+            } catch (SocketTimeoutException i) {
+                continue;
+            } catch (Exception e){
+                System.out.print("SERVER ERROR: Failed to retrieve packet");
+                continue;
             }
             if(isValidRequest(pack)){
                 createNewThread(pack);
@@ -37,16 +39,18 @@ public class Server{
             }
         }
     }
+    public void exit(){
+        running = false;
+    }
+
 
     private void createNewThread(DatagramPacket p){
         ServerThread thread = null;
         try{
             thread = new ServerThread(p);
         } catch (Exception e){
+            System.out.println("SERVER ERROR: Failed start thread");
             e.printStackTrace();
-            System.out.println("SERVER: Error handling packet from "
-                    + p.getAddress()+ ", Port: " + p.getPort());
-            thread.interrupt();
         }
     }
     private void processIncorrectInstantiation(DatagramPacket pack){
