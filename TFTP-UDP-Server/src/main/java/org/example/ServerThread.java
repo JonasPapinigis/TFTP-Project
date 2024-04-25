@@ -11,7 +11,7 @@ import java.util.logging.Logger;
 
 
 public class ServerThread extends Thread {
-
+    //I added the octet mode identifier despite mode being unchanging for TFTP protocol consistency
     private final static byte[] octetBytes = "octet".getBytes(StandardCharsets.UTF_8);
     private volatile boolean running = true;
     private int blockNumber = 0;
@@ -23,105 +23,100 @@ public class ServerThread extends Thread {
     DatagramSocket socket;
     private InetAddress destAddress;
     private int destTID;
-    private int localPort;
+    private int TID;
 
     private DatagramPacket initPacket;
 
-    public ServerThread(DatagramPacket packet) throws SocketException {
-
+    public ServerThread(DatagramPacket packet){
+        //Instanciates socket outside of 1000 range to avoid administrative permission
+        //Changes socket to not impede on main server function at 69
+        //New socket detected from second packet in Client
         Random rand = new Random();
-        socket = new DatagramSocket(rand.nextInt(10000) + 1000);
+        TID = rand.nextInt(10000) + 1000;
+        try {
+            socket = new DatagramSocket(TID);
+        } catch (SocketException e){
+            System.out.println("SERVER THREAD: Failed to instanciate socket: " + TID);
+        }
 
-        int localPort = socket.getLocalPort();
-        socket.setSoTimeout(10000);
-
+        //Thread is launched via WRQ/RRQ parameter as those are the only ones that lead to normal function
+        //Data is extracted from first parameter
         this.initPacket = packet;
         destAddress = initPacket.getAddress();
         destTID = initPacket.getPort();
-        System.out.println("Created New thread: "+ localPort);
 
     }
 
-    private static byte[] createErrorData() {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
 
-        // Write the opcode for error
-        baos.write(0); // First byte of the opcode
-        baos.write(5); // Second byte of the opcode (05 for error)
-
-        // Write the error code
-        baos.write(0); // First byte of the error code
-        baos.write(1); // Second byte of the error code (01 for "File Not Found")
-
-        // Write the error message
-        try {
-            baos.write("File Not Found".getBytes(StandardCharsets.UTF_8));
-            baos.write(0); // Null byte to terminate the error message
-        } catch (Exception e) {
-            System.err.println("Error writing the error message.");
-        }
-
-        return baos.toByteArray();
-
-    }
 
 
     public void run() {
-        System.out.println("ServerThread in run()");
+        //Not sure why I used this implementation
         int opcode = ((initPacket.getData()[0] & 0xFF) << 8) | (initPacket.getData()[1] & 0xFF);
 
-        // Use a switch-case statement to catch specific opcodes
+        //Only correct routes are handling RRQ/WRQ
         switch (opcode) {
             case 0x0001:
                 processRRQ(initPacket);
                 break;
             case 0x0002:
-                System.out.println("SERVERTHREAD: about to process WRQ");
                 processWRQ(initPacket);
                 break;
             default:
                 System.out.println("Unknown opcode.");
+                sendErrAwaitClose();
                 break;
         }
     }
 
     public void processRRQ(DatagramPacket p) {
-        createReadFile();
+        //Check if file exists to read
         File toRead = new File("Files", extractFilename(p));
         if (!toRead.exists()){
             sendErrAwaitClose();
         }
         else {
+            //Repeat until no more bytes left
             boolean transferComplete = false;
             try (BufferedInputStream bis = new BufferedInputStream(new FileInputStream(toRead))) {
+                //Read requests responded to at BlockNo 1, increment happens at start in any case
                 blockNumber++;
                 System.out.println("SERVERTHREAD: Total Number of bytes to send: "+ bis.available());
+                //Used for packet
                 byte[] dataBuffer = new byte[MAX_DATA_LENGTH];
+                //Used for file reading
                 byte[] sendBuffer = new byte[MAX_PACKET];
+                //Tracking point at which the file-reading has gotten to
                 int bytesRead;
-                while (!transferComplete){
+
+                while (!transferComplete ){
+                    //Number updated by .read()
                     bytesRead = bis.read(dataBuffer);
+                    //If no more is left in file, succesful termination
                     if (bytesRead == -1) {
-                        bytesRead = 0; // No more data to read, send a zero-length block
+                        bytesRead = 0;
                         transferComplete = true;
                     }
-                    sendBuffer[0] = 0;
-                    sendBuffer[1] = 3; // TFTP DATA Opcode is 03
+                    sendBuffer[0] = 0; sendBuffer[1] = 3; //Opcode
+                    //BlockNo
                     sendBuffer[2] = (byte) (blockNumber >> 8);
                     sendBuffer[3] = (byte) (blockNumber & 0xFF);
+                    //Copy databuffer from pos 0 to send buffer after opcode + blockno (pos 4) at bytes read. bytesRead = 0 if no more to send. Empty DP
                     System.arraycopy(dataBuffer, 0, sendBuffer, 4, bytesRead);
                     DatagramPacket dataPacket = new DatagramPacket(sendBuffer, bytesRead + 4,
                             p.getAddress(), p.getPort());
                     boolean ackReceived = false;
-                    while (!ackReceived){
-                        System.out.println("SERVERTHREAD: Sending Packet " + blockNumber);
+                    int timesSent = 0;
+
+                    //Data sent until ACK received or sent 5 times. Abnormal termination
+                    while (!ackReceived && timesSent < 6){
                         socket.send(dataPacket);
-                        byte[] ackBuffer = new byte[4];  // ACK packet size
+                        //new ACK
+                        byte[] ackBuffer = new byte[4];
                         DatagramPacket ackPacket = new DatagramPacket(ackBuffer, ackBuffer.length);
+
                         try {
-                            System.out.println("SERVERTHREAD: Waiting to recieve ACK "+ blockNumber);
                             socket.receive(ackPacket);
-                            System.out.println("SERVERTHREAD: ACK "+ blockNumber+ " recieved");
                             int ackBlockNumber = ((ackBuffer[2] & 0xFF) << 8) | (ackBuffer[3] & 0xFF);
                             if (ackBuffer[1] == 4 && ackBlockNumber == blockNumber) {  // Check for correct ACK
                                 ackReceived = true;
@@ -130,8 +125,14 @@ public class ServerThread extends Thread {
                                     transferComplete = true;  // Last packet, end of data transmission
                                 }
                             }
+                            else{
+                                System.out.println("TFTP-protocol inconsitent package");
+                                break;
+                            }
                         } catch (SocketTimeoutException e) {
+                            //Increment times sent and repeat if ACK not received
                             System.out.println("Timeout, Resending Packet " + blockNumber);
+                            timesSent++;
                         }
                     }
 
@@ -141,77 +142,86 @@ public class ServerThread extends Thread {
                 System.out.println("Failed to read found file");
             }
         }
-
+        System.out.println("File Send Successfully");
     }
 
     public void processWRQ(DatagramPacket p) {
+        //Creates file if not yet found in Files
         String filename = extractFilename(p);
         File directory = new File("Files");
         if (!directory.exists()) {
             directory.mkdirs();
         }
         File toWrite = new File(directory, filename);
-
+        //Create and send response ACK
         byte[] ackData = {0, 4, (byte) (blockNumber >> 8), (byte) (blockNumber & 0xFF)};
-        for (byte b : ackData) {
-            System.out.print(String.format("%8s", Integer.toBinaryString(b & 0xFF)).replace(' ', '0') + " ");
-        }
-        System.out.println("ACK Data made: "+ destAddress + " - " + destTID);
         DatagramPacket ackPacket = new DatagramPacket(ackData, ackData.length, destAddress, destTID);
 
         try {
             socket.send(ackPacket);
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            System.out.println("SERVER THREAD: Failed to send ACK");
         }
-
+        //Awaited block num incremented as exchange should be complete
         blockNumber++;
         try (BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(toWrite))) {
+            int timesSent = 0;
             while (true) {
-                System.out.println("BlockNo: "+blockNumber);
+                //Will be receiving datapackets, max length used
                 byte[] dataBuffer = new byte[MAX_PACKET];
                 DatagramPacket receivePacket = new DatagramPacket(dataBuffer, dataBuffer.length);
                 socket.receive(receivePacket);
-                System.out.println("Recieved Packet");
                 int length = receivePacket.getLength();
                 int receivedBlockNumber = ((dataBuffer[2] & 0xFF) << 8) | (dataBuffer[3] & 0xFF);
 
-                if (dataBuffer[1] == 3 && receivedBlockNumber == blockNumber + 1) {  // Data packet opcode
-                    System.out.println("Recieved packet Contents: "+bytesToBinaryString(dataBuffer));
+                if (dataBuffer[1] == 3 && receivedBlockNumber == blockNumber) {
                     bos.write(dataBuffer, 4, length - 4);
                     blockNumber = receivedBlockNumber;
+                    ackData[2] = (byte) (blockNumber >> 8);
+                    ackData[3] = (byte) (blockNumber & 0xFF);
+                    ackPacket = new DatagramPacket(ackData, ackData.length, destAddress, destTID);
+                    //Times sent reset as not abnormal packet sending
+                    timesSent = 0;
+                    socket.send(ackPacket);
+                }
+                else if (dataBuffer[1] == 3 && receivedBlockNumber == blockNumber -1){
+                    socket.send(ackPacket);
+                    timesSent++;
+                }
+                else{
+                    System.out.println("SERVER THREAD: Invalid Block Number");
+                    sendErrAwaitClose();
+                    break;
                 }
 
-                // Send ACK
-                ackData[2] = (byte) (blockNumber >> 8);
-                ackData[3] = (byte) (blockNumber & 0xFF);
-                ackPacket = new DatagramPacket(ackData, ackData.length, destAddress, destTID);
-                socket.send(ackPacket);
 
                 if (length < MAX_PACKET) {
+                    System.out.println("File Received Successfully");
                     break;  // Last packet, as it is less than the maximum packet size
                 }
 
             }
 
         } catch (Exception e) {
-            e.printStackTrace();
-            sendErrAwaitClose();
+            System.out.println("Failed to write to file");
         }
     }
 
 
     private String extractFilename(DatagramPacket p) {
+
+        //Used to find filename from WRQ/RRQ packet's data byte array
         byte[] data = p.getData();
-        int length = p.getLength(); // To ensure we don't read past the actual data
+        int length = p.getLength();
         StringBuilder filename = new StringBuilder();
 
-        // Start reading the filename just after the opcode, hence index = 2
+        // Reading begins after opcode
         for (int i = 2; i < length; i++) {
             if (data[i] == 0) {
                 break; // Stop on the first null byte, which terminates the filename
             }
-            filename.append((char) data[i]); // Cast byte to char and append to the filename
+            //Cast byte to char
+            filename.append((char) data[i]);
         }
 
         return filename.toString();
@@ -226,54 +236,11 @@ public class ServerThread extends Thread {
             e.printStackTrace();}
     }
 
-
-    public static boolean checkFileInFolder(String fileName) {
-        // Define the directory path for the "Files" folder
-        String directoryPath = "Files";
-        File directory = new File(directoryPath);
-
-        // Check if the "Files" directory exists
-        if (!directory.exists() || !directory.isDirectory()) {
-            System.out.println("Directory does not exist.");
-            return false;
-        }
-
-        // Define the file path within the "Files" directory
-        File file = new File(directory, fileName);
-
-        // Check if the file exists within the "Files" directory
-        if (file.exists() && file.isFile()) {
-            System.out.println("File exists.");
-            return true;
-        } else {
-            System.out.println("File does not exist.");
-            return false;
-        }
-    }
-
-    public void makeFiles() {
-        File directory = new File("Files", "file.txt");
-        if (!directory.exists()) {
-            directory.mkdirs();
-        }
-    }
-
-
-    //Test Methods
-    public int getTID() {
-        return localPort;
-    }
-
-    public DatagramPacket getInitPacket() {
-        return initPacket;
-    }
-
-    public DatagramSocket getSocket() {
-        return socket;
-    }
-
-
+    //*
     public static void main(String[] args) {
+        //!!!!!!!! THIS IS A TEST USED IN DEVELOPMENT OF SERVERTHREAD BEFORE SERVER OR CLIENT CLASSES!!!!!!!!!!
+        //!!!!!!!! NOT FOR ACTUAL EXECUTION !!!!!!!!!!!
+
         DatagramSocket receivingSocket = null;
         try{
             int serverPort = 9999;
@@ -335,61 +302,34 @@ public class ServerThread extends Thread {
 
     }
 
-
-    public static String bytesToBinaryString(byte[] bytes) {
-        StringBuilder binary = new StringBuilder();
-        for (byte b : bytes) {
-            binary.append(String.format("%8s", Integer.toBinaryString(b & 0xFF)).replace(' ', '0')).append(" ");
-        }
-        return binary.toString().trim();
-    }
-
-    public static byte[] createPacketData(int opcode, String filename, String mode) {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        baos.write(0);
-        baos.write(opcode); // WRQ is 2
-        try {
-            baos.write(filename.getBytes(StandardCharsets.UTF_8));
-            baos.write(0);
-            baos.write(mode.getBytes(StandardCharsets.UTF_8));
-            baos.write(0);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        return baos.toByteArray();
-    }
-
-    public static byte[] createDataPacket(int blockNumber, boolean fullSize) {
-        int size = fullSize ? MAX_PACKET : MAX_PACKET / 2;
-        byte[] data = new byte[size];
-        data[0] = 0;
-        data[1] = 3; // DATA opcode
-        data[2] = (byte) (blockNumber >> 8);
-        data[3] = (byte) (blockNumber & 0xFF);
-        for (int i = 4; i < size; i++) {
-            data[i] = (byte) (i % 2); // Filling with sample data
-        }
-        return data;
-    }
-    public static void printByteArrayInHex(byte[] byteArray, int offset) {
+    //Method used for testing buffer outputs during development
+    private static void printByteArrayInHex(byte[] byteArray, int offset) {
+        //Offset used to get past opcodes/blockNos
         for (int i = offset; i < byteArray.length; i++) {
             System.out.printf("%02X ", byteArray[i]); // %02X formats the byte as a two-digit hexadecimal number
         }
         System.out.println(); // Print a newline after all bytes are printed
     }
 
-    public static void createReadFile() {
-        String filePath = "Files/file.txt";
-        byte[] sampleData = generateSampleData(716);
+    private static byte[] createErrorData() {
 
-        try (BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(filePath))) {
-            bos.write(sampleData);
-            System.out.println("File created successfully: " + filePath);
-        } catch (IOException e) {
-            e.printStackTrace();
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+        baos.write(0);baos.write(5); //Opcode
+        baos.write(0);baos.write(1); //Errorcode (irrelevant in project spec, added anyway)
+
+        //Error message irrelevant in spec, added anyway
+        try {
+            baos.write("File Not Found".getBytes(StandardCharsets.UTF_8));
+            baos.write(0); // Null byte to terminate the error message
+        } catch (Exception e) {
+            System.err.println("Error writing the error message.");
         }
-    }
 
+        return baos.toByteArray();
+
+    }
+    //Test Method used during development to create File data before client was made
     private static byte[] generateSampleData(int totalBytes) {
         byte[] sampleData = new byte[totalBytes];
         for (int i = 0; i < totalBytes; i++) {
@@ -401,7 +341,8 @@ public class ServerThread extends Thread {
 }
 /**
  *
- * Main Method to test WRQ
+ * !!!!!!!!!Main Method to test WRQ!!!!!!!!!!
+ * !!!!!!!!!Not Part of Actula function!!!!!!!!
  *
  *
  * DatagramSocket clientSocket = null;
