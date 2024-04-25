@@ -83,14 +83,15 @@ public class ClientController {
         int targetTID = 69;
         int bytesRead = 0;
         boolean transferComplete = false;
-        File file = new File("Files/", filename);
+        File file = new File("Files", filename+".txt");
         if (!file.exists()){
-            System.out.println("File does not exist in /Files");
+            System.out.println(file.getPath()+  " does not exist in /Files");
             return false;
         }
         try (BufferedInputStream bis = new BufferedInputStream(new FileInputStream(file))){
 
             byte[] WRQData = createReqData(filename,2);
+            printByteArray(WRQData);
             DatagramPacket requestPacket = new DatagramPacket(WRQData,WRQData.length,targetAddress,targetTID);
             socket.send(requestPacket);
 
@@ -99,11 +100,14 @@ public class ClientController {
             socket.receive(ackPacket);
 
             targetTID = ackPacket.getPort();
-
+            System.out.println("New TID: "+targetTID);
             //Validate  WRQ ACK
-            byte[] ackKData = ackPacket.getData();
-            int receivedBlockNumber = ((ackKData[2] & 0xFF) << 8) | (ackKData[3] & 0xFF);
-            if (ackKData.length !=4 || ackKData[0] != 0 || ackKData[1] != 4 || receivedBlockNumber != blockNumber){
+            byte[] ackData = ackPacket.getData();
+            System.out.print("Block:"+blockNumber+" ACK:");
+            printByteArray(ackData);
+
+            int receivedBlockNumber = ((ackData[2] & 0xFF) << 8) | (ackData[3] & 0xFF);
+            if (ackData.length !=4 || ackData[0] != 0 || ackData[1] != 4 || receivedBlockNumber != blockNumber){
                 System.out.println("CLIENT: Invalid ACK: Expct="+blockNumber+ "  Rcvd="+ receivedBlockNumber);
                 return false;
             }
@@ -174,6 +178,7 @@ public class ClientController {
         buffer[nameToBytes.length+2] = 0;
         System.arraycopy(octetBytes,0,buffer,nameToBytes.length+3,octetBytes.length);
         buffer[dataLength-1] = 0;
+
         return buffer;
     }
 
@@ -230,7 +235,7 @@ public class ClientController {
             else if (arguements.length == 1 && arguements[0].equals("-help")){
                 printAll(instructions);
             }
-            else if (arguements.length == 2 && arguements[0].equals("-generate")){
+            else if (arguements.length == 3 && arguements[0].equals("-generate")){
                 if (generateFile(arguements[1],Integer.parseInt(arguements[2]))){
                     System.out.println("CLIENT: File generated Successfully");
                 }
@@ -283,11 +288,13 @@ public class ClientController {
     private static void printAll(String[] lines){
         for (String str : lines)
         {
-            System.out.print(str);
+            System.out.print(str+" ");
         }
+        System.out.println();
     }
     private static boolean isFile(String filename){
-        File file = new File("Files/", filename);
+        File file = new File("Files/", filename+".txt");
+        System.out.println(file.getPath());
         return file.exists();
     }
     public static boolean generateFile(String filename, int len) {
@@ -324,4 +331,13 @@ public class ClientController {
         System.out.println("File successfully created: " + file.getAbsolutePath() + ", Size: " + len + " bytes");
         return true;
     }
+
+    private void printByteArray(byte[] bytes) {
+        // Print each byte in the array as a two-digit hexadecimal number
+        for (byte b : bytes) {
+            System.out.print(String.format("%02X ", b)); // %02X ensures printing at least two digits, padding with zero if necessary
+        }
+        System.out.println(); // Print a newline after the array
+    }
+
 }

@@ -38,7 +38,7 @@ public class ServerThread extends Thread {
         this.initPacket = packet;
         destAddress = initPacket.getAddress();
         destTID = initPacket.getPort();
-
+        System.out.println("Created New thread: "+ localPort);
 
     }
 
@@ -67,6 +67,7 @@ public class ServerThread extends Thread {
 
 
     public void run() {
+        System.out.println("ServerThread in run()");
         int opcode = ((initPacket.getData()[0] & 0xFF) << 8) | (initPacket.getData()[1] & 0xFF);
 
         // Use a switch-case statement to catch specific opcodes
@@ -75,6 +76,7 @@ public class ServerThread extends Thread {
                 processRRQ(initPacket);
                 break;
             case 0x0002:
+                System.out.println("SERVERTHREAD: about to process WRQ");
                 processWRQ(initPacket);
                 break;
             default:

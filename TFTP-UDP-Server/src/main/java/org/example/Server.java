@@ -12,7 +12,8 @@ import java.util.Scanner;
 public class Server extends Thread{
     private final static int MAX_LENGTH = 516;
     protected DatagramSocket socket = null;
-    private boolean running = false;
+    private volatile boolean running = false;
+    private static final byte[] octetBytes = "octet".getBytes(StandardCharsets.UTF_8);
     public Server() throws SocketException{
 
         socket = new DatagramSocket(69);
@@ -20,26 +21,30 @@ public class Server extends Thread{
 
     }
 
-    public void start(){
+    public void runServer() {
+        running = true;
         byte[] buffer = new byte[MAX_LENGTH];
-        while(true){
-            System.out.println("...Listening");
-            DatagramPacket pack = new DatagramPacket(buffer,MAX_LENGTH);
+        while (running) {
+            System.out.println("...Listening (type -exit to stop)");
+            DatagramPacket pack = new DatagramPacket(buffer, MAX_LENGTH);
             try {
                 socket.receive(pack);
+                pack = cleanRequest(pack);
             } catch (SocketTimeoutException i) {
-                continue;
-            } catch (Exception e){
-                System.out.print("SERVER ERROR: Failed to retrieve packet");
+                continue;  // Just keep listening
+            } catch (Exception e) {
+                System.out.println("SERVER ERROR: Failed to retrieve packet");
                 continue;
             }
-            if(isValidRequest(pack)){
+            System.out.println("here");
+            if (isValidRequest(pack)) {
                 createNewThread(pack);
-            }
-            else{
+            } else {
                 processIncorrectInstantiation(pack);
             }
         }
+        socket.close();
+        System.out.println("Server has been shut down.");
     }
     public void exit(){
         running = false;
@@ -50,6 +55,7 @@ public class Server extends Thread{
         ServerThread thread = null;
         try{
             thread = new ServerThread(p);
+            thread.start();
         } catch (Exception e){
             System.out.println("SERVER ERROR: Failed start thread");
             e.printStackTrace();
@@ -72,16 +78,19 @@ public class Server extends Thread{
     }
 
     private boolean isValidRequest(DatagramPacket pack){
+
         byte[] data = pack.getData();
         int length = pack.getLength();
+        if (data[0] != 0 || (data[1] != 1 && data[1] != 2)){
 
-        if (data[0] != 0 || data[1] != 1 || data[1] != 2){
             return false;
         }
+
         int zeroBytes = 0;
         for (int i = 2; i < length; i++){
             if (data[i] == 0){
                 zeroBytes++;
+                System.out.println("BINGO");
             }
         }
 
@@ -110,29 +119,75 @@ public class Server extends Thread{
                 validInput = true;
                 try {
                     Server server = new Server();
-                    server.start();
+                    Thread serverThread = new Thread(server::runServer);
+                    serverThread.start();
+                    System.out.println("...Server started");
                     boolean exited = false;
                     while(!exited){
-                        System.out.println("Type -exit to shut down server");
                         argument = scanner.nextLine();
                         if (argument.equals("-exit")){
                             exited=true;
-                            server.interrupt();
+                            server.exit();
+                            serverThread.join();
                         }
                     }
                 } catch (SocketException e) {
                     System.out.println("SERVER ERROR: Socket Error, failed to start server");
                     e.printStackTrace();
                     continue;
+                } catch (InterruptedException i){
+                    System.out.println("SERVER ERROR: Failed to close gracefully");
+                    break;
                 }
             }
             else{
-                System.out.println("SERVER ERROR: Invalid arguement");
+                System.out.println("SERVER ERROR: Invalid argument");
             }
         }
 
 
 
     }
+
+    private static void printByteArray(byte[] bytes) {
+        // Print each byte in the array as a two-digit hexadecimal number
+        for (byte b : bytes) {
+            System.out.print(String.format("%02X ", b)); // %02X ensures printing at least two digits, padding with zero if necessary
+        }
+        System.out.println(); // Print a newline after the array
+    }
+    private static String extractFilename(DatagramPacket p) {
+        byte[] data = p.getData();
+        int length = p.getLength(); // To ensure we don't read past the actual data
+        StringBuilder filename = new StringBuilder();
+
+        // Start reading the filename just after the opcode, hence index = 2
+        for (int i = 2; i < length; i++) {
+            if (data[i] == 0) {
+                break; // Stop on the first null byte, which terminates the filename
+            }
+            filename.append((char) data[i]); // Cast byte to char and append to the filename
+        }
+
+        return filename.toString();
+    }
+
+    private DatagramPacket cleanRequest(DatagramPacket p){
+        DatagramPacket packet = p;
+        String filename = extractFilename(p);
+        byte[] data = p.getData();
+        byte[] nameBytes = filename.getBytes(StandardCharsets.UTF_8);
+        byte[] newData = new byte[nameBytes.length+ octetBytes.length+4];
+        newData[0] = data[0]; newData[1] = data[1];
+        System.arraycopy(nameBytes,0,newData,2,nameBytes.length);
+        newData[nameBytes.length+2] = 0;
+        System.arraycopy(octetBytes,0,newData,nameBytes.length+3,octetBytes.length);
+        newData[nameBytes.length+3+octetBytes.length] = 0;
+        packet.setData(newData);
+        return packet;
+
+    }
+
+
 
 }
