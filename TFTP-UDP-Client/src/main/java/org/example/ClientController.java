@@ -354,8 +354,10 @@ public class ClientController {
     }
     //Instruction array
     private static String[] instructions = {"COMMANDS: -generate [filename] [num] \n\t\t\t\t\t Will generate a sample .txt file of num length in " +
-            "\n\t\t\t\t\t the Files folder in the working directory\n","         -send [filename] [host] \n\t\t\t\t\t If present in Files, will send filename.txt to specified host over" +
-            "TFTP protocol \n\t\t\t\t\t use localhost as ip if sending to 127.0.0.1\n","         -request [filename] [host]\n\t\t\t\t\t If available, will copy filename.txt from the host server over TFTP protcol" +
+            "\n\t\t\t\t\t the Files folder in the working directory\n",
+            "         -send [filename] [host] \n\t\t\t\t\t If present in Files, will send filename.txt to specified host over" +
+            "TFTP protocol \n\t\t\t\t\t use localhost as ip if sending to 127.0.0.1\n",
+            "         -request [filename] [host]\n\t\t\t\t\t If available, will copy filename.txt from the host server over TFTP protcol" +
             "\n\t\t\t\t\t use localhost as ip if sending to 127.0.0.1\n\n", "         -exit\n\n","         -help\n\n" };
 
     //Used to print all in String[]
